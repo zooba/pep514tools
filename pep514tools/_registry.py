@@ -41,12 +41,16 @@ _KEY_TO_ATTR = re.compile('([A-Z]+[a-z]+)')
 class PythonWrappedDict(object):
     @staticmethod
     def _attr_to_key(attr):
+        if not attr:
+            return ''
         if not _VALID_ATTR.match(attr):
             return attr
         return ''.join(c.capitalize() for c in attr.split('_'))
 
     @staticmethod
     def _key_to_attr(key):
+        if not key:
+            return ''
         if not _VALID_KEY.match(key):
             return key
         return '_'.join(k for k in _KEY_TO_ATTR.split(key) if k).lower()
@@ -57,6 +61,9 @@ class PythonWrappedDict(object):
     def __getattr__(self, attr):
         if attr.startswith('_'):
             return object.__getattribute__(self, attr)
+
+        if attr == 'value':
+            attr = ''
 
         key = self._attr_to_key(attr)
         try:
@@ -71,6 +78,8 @@ class PythonWrappedDict(object):
         if attr.startswith('_'):
             return object.__setattr__(self, attr, value)
 
+        if attr == 'value':
+            attr = ''
         self._d[self._attr_to_key(attr)] = value
 
     def __dir__(self):
@@ -109,7 +118,7 @@ class RegistryAccessor(object):
 
     def get_value(self, value_name):
         try:
-            with winreg.OpenKeyEx(self._root, self.name, 0, winreg.KEY_READ | self._flags) as key:
+            with winreg.OpenKeyEx(self._root, self.subkey, 0, winreg.KEY_READ | self._flags) as key:
                 return get_value_from_tuple(*winreg.QueryValueEx(key, value_name))
         except OSError:
             return None
@@ -126,20 +135,49 @@ class RegistryAccessor(object):
                     vname, value, vtype = winreg.EnumValue(key, i)
                     value = get_value_from_tuple(value, vtype)
                     if value:
-                        schema[vname or 'Value'] = value
+                        schema[vname or ''] = value
         except OSError:
             pass
 
         return PythonWrappedDict(schema)
 
     def set_value(self, value_name, value):
-        with winreg.CreateKeyEx(self._root, self.name, 0, winreg.KEY_WRITE | self._flags) as key:
+        with winreg.CreateKeyEx(self._root, self.subkey, 0, winreg.KEY_WRITE | self._flags) as key:
             if value is None:
                 winreg.DeleteValue(key, value_name)
             elif isinstance(value, str):
                 winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, value)
             else:
                 raise TypeError('cannot write {} to registry'.format(type(value)))
+
+    def _set_all_values(self, rootkey, name, info, errors):
+        with winreg.CreateKeyEx(rootkey, name, 0, winreg.KEY_WRITE | self._flags) as key:
+            for k, v in info:
+                if isinstance(v, PythonWrappedDict):
+                    self._set_all_values(key, k, v._items(), errors)
+                elif isinstance(v, dict):
+                    self._set_all_values(key, k, v.items(), errors)
+                elif v is None:
+                    winreg.DeleteValue(key, k)
+                elif isinstance(v, str):
+                    winreg.SetValueEx(key, k, 0, winreg.REG_SZ, v)
+                else:
+                    errors.append('cannot write {} to registry'.format(type(v)))
+
+    def set_all_values(self, info):
+        errors = []
+        if isinstance(info, PythonWrappedDict):
+            items = info._items()
+        elif isinstance(info, dict):
+            items = info.items()
+        else:
+            raise TypeError('info must be a dictionary')
+        
+        self._set_all_values(self._root, self.subkey, items, errors)
+        if len(errors) == 1:
+            raise ValueError(errors[0])
+        elif errors:
+            raise ValueError(errors)
 
     def delete(self):
         for k in self:
@@ -149,7 +187,7 @@ class RegistryAccessor(object):
         except OSError:
             return
         with key:
-            winreg.DeleteKeyEx(self.subkey)
+            winreg.DeleteKeyEx(key, self.subkey)
 
 
 def open_source(registry_source):

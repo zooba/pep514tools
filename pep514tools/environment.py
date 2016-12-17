@@ -5,17 +5,29 @@
 # Distributed under the terms of the MIT License
 #-------------------------------------------------------------------------
 
-__all__ = ['Environment', 'findall', 'find']
+__all__ = ['Environment', 'findall', 'find', 'findone']
 
 from itertools import count
 from pep514tools._registry import open_source, REGISTRY_SOURCE_LM, REGISTRY_SOURCE_LM_WOW6432, REGISTRY_SOURCE_CU
 import re
+import sys
 
 # These tags are treated specially when the Company is 'PythonCore'
 _PYTHONCORE_COMPATIBILITY_TAGS = {
     '2.0', '2.1', '2.2', '2.3', '2.4', '2.5', '2.6', '2.7',
     '3.0', '3.1', '3.2', '3.3', '3.4'
 }
+
+_IS_64BIT_OS = None
+def _is_64bit_os():
+    global _IS_64BIT_OS
+    if _IS_64BIT_OS is None:
+        if sys.maxsize > 2**32:
+            import platform
+            _IS_64BIT_OS = (platform.machine() == 'AMD64')
+        else:
+            _IS_64BIT_OS = False
+    return _IS_64BIT_OS
 
 class Environment(object):
     def __init__(self, source, company, tag, guessed_arch=None):
@@ -38,21 +50,18 @@ class Environment(object):
             if self._guessed_arch:
                 info._setdefault('SysArchitecture', self._guessed_arch)
 
-    def save(self):
+    def save(self, copy=False):
         if not self._source:
             raise ValueError('Environment not initialized with a source')
         if (self.company, self.tag) != self._orig_info:
-            self._source[self._orig_info[0]][self._orig_info[1]].delete()
+            if not copy:
+                self._source[self._orig_info[0]][self._orig_info[1]].delete()
             self._orig_info = self.company, self.tag
 
         src = self._source[self.company][self.tag]
-        src.set_value('DisplayName', self.info.display_name)
-        src.set_value('SupportUrl', self.info.support_url)
-        src.set_value('Version', self.info.version)
-        src.set_value('SysVersion', self.info.sys_version)
-        src.set_value('SysArchitecture', self.info.sys_architecture)
+        src.set_all_values(self.info)
 
-        self.info = src.get_all_values(key)
+        self.info = src.get_all_values()
 
     def delete(self):
         if (self.company, self.tag) != self._orig_info:
@@ -66,13 +75,17 @@ class Environment(object):
         return '<environment {}\\{}>'.format(self.company, self.tag)
 
 def _get_sources(include_per_machine=True, include_per_user=True):
-    if include_per_user:
-        yield open_source(REGISTRY_SOURCE_CU), None
-    if include_per_machine:
-        yield open_source(REGISTRY_SOURCE_LM), None
-        # Technically WOW6432 is not necessary on 32-bit OS, but detecting that
-        # is more expensive than just checking the key.
-        yield open_source(REGISTRY_SOURCE_LM_WOW6432), '32bit'
+    if _is_64bit_os():
+        if include_per_user:
+            yield open_source(REGISTRY_SOURCE_CU), None
+        if include_per_machine:
+            yield open_source(REGISTRY_SOURCE_LM), '64bit'
+            yield open_source(REGISTRY_SOURCE_LM_WOW6432), '32bit'
+    else:
+        if include_per_user:
+            yield open_source(REGISTRY_SOURCE_CU), '32bit'
+        if include_per_machine:
+            yield open_source(REGISTRY_SOURCE_LM), '32bit'
 
 def findall(include_per_machine=True, include_per_user=True):
     for src, arch in _get_sources(include_per_machine=include_per_machine, include_per_user=include_per_user):
@@ -86,7 +99,7 @@ def findall(include_per_machine=True, include_per_user=True):
                 else:
                     yield env
 
-def find(company_or_tag, tag=None, include_per_machine=True, include_per_user=True):
+def find(company_or_tag, tag=None, include_per_machine=True, include_per_user=True, maxcount=None):
     if not tag:
         env = Environment(None, 'PythonCore', company_or_tag)
     else:
@@ -103,3 +116,8 @@ def find(company_or_tag, tag=None, include_per_machine=True, include_per_user=Tr
         else:
             results.append(env)
     return results
+
+def findone(company_or_tag, tag=None, include_per_machine=True, include_per_user=True):
+    found = find(company_or_tag, tag, include_per_machine, include_per_user, maxcount=1)
+    if found:
+        return found[0]

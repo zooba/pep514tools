@@ -8,4 +8,4 @@
 __author__ = 'Steve Dower <steve.dower@python.org>'
 __version__ = '0.1.0'
 
-from pep514tools.environment import findall, find
+from pep514tools.environment import findall, find, findone

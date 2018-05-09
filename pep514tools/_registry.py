@@ -105,12 +105,12 @@ class RegistryAccessor(object):
 
     def __iter__(self):
         subkey_names = []
-        with winreg.OpenKeyEx(self._root, self.subkey, 0, winreg.KEY_READ | self._flags) as key:
-            try:
+        try:
+            with winreg.OpenKeyEx(self._root, self.subkey, 0, winreg.KEY_READ | self._flags) as key:
                 for i in count():
                     subkey_names.append(winreg.EnumKey(key, i))
-            except OSError:
-                pass
+        except OSError:
+            pass
         return iter(self[k] for k in subkey_names)
 
     def __getitem__(self, key):
@@ -172,7 +172,7 @@ class RegistryAccessor(object):
             items = info.items()
         else:
             raise TypeError('info must be a dictionary')
-        
+
         self._set_all_values(self._root, self.subkey, items, errors)
         if len(errors) == 1:
             raise ValueError(errors[0])
